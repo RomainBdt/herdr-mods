@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, panes, focused, exec, theme, props, layout, run } from "herdr";
+import { spaces, panes, focused, exec, theme, props, layout, run, shared, setShared } from "herdr";
 
 const GH = ["gh", "C:/Program Files/GitHub CLI/gh.exe"];
 const FIELDS = "number,title,author,labels,isDraft,updatedAt,url,reviewDecision,headRefName,state";
@@ -56,6 +56,17 @@ export default class PullRequests extends View {
     });
   }
 
+  // Shows the PR in the review pane (pr-review), splitting one in beside the
+  // focused pane when this tab has none; an existing one just follows.
+  review(pr) {
+    const { cwd } = where();
+    setShared("pr-review", { number: pr.number, repo: this.repo, cwd, url: pr.url });
+    const tab = focused()?.tab;
+    const pane = panes().find((p) => p.tab === tab && p.mod === "pr-review");
+    if (pane) run("pane.focus", { pane: pane.pane });
+    else run("pane.split", { direction: "right", mod: "pr-review", props: {} });
+  }
+
   setState(s, cx) { this.state = s; this.refresh(cx, true); cx.notify(); }
 
   setMine(cx) { this.mine = !this.mine; this.refresh(cx, true); cx.notify(); }
@@ -81,13 +92,19 @@ export default class PullRequests extends View {
     const t = theme();
     const status = pr.state === "MERGED" ? ["merged", t.done] : pr.state === "CLOSED" ? ["closed", t.blocked] : pr.isDraft ? ["draft", t.muted] : null;
     const review = pr.reviewDecision === "APPROVED" ? ["approved", t.working] : pr.reviewDecision === "CHANGES_REQUESTED" ? ["changes requested", t.blocked] : null;
-    return v_flex().id("pr-" + pr.number).gap(4).py(7).rounded(6).px(4)
+    const cur = shared("pr-review"), picked = cur?.number === pr.number && (!cur.repo || cur.repo === this.repo);
+    return v_flex().id("pr-" + pr.number).gap(4).py(7).rounded(6).px(4).cursor_pointer()
+      .when(picked, (e) => e.bg(t.selected))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => exec("cmd", ["/c", "start", "", pr.url]).catch(() => null))
+      .on_click(() => this.review(pr))
       .child(h_flex().gap(8).items_center()
         .child(div().text_color(t.dim).child("#" + pr.number))
         .child(div().flex_1().truncate().child(pr.title))
-        .when(status, (e) => e.child(div().text_size(11).text_color(status[1]).child(status[0]))))
+        .when(status, (e) => e.child(div().text_size(11).text_color(status[1]).child(status[0])))
+        .child(div().id("pr-gh-" + pr.number).px(4).rounded(4).text_size(12).text_color(t.dim)
+          .hover((s) => s.bg(t.raised).text_color(t.foreground))
+          .on_click((_e, cx) => { cx.stop_propagation(); exec("cmd", ["/c", "start", "", pr.url]).catch(() => null); })
+          .child("↗")))
       .child(h_flex().gap(8).text_size(11).text_color(t.dim)
         .child(div().child(pr.author?.login || ""))
         .child(div().truncate().child(pr.headRefName))
